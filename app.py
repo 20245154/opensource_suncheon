@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 from shs.request import Request
 from shs.response import Response, json, text
@@ -71,22 +71,12 @@ def student_api(req: Request, params: Dict[str, str]) -> Response:
     if not func_path.is_file():
         return text("Student API not found", 404)
 
-    try:
-        module = _load_student_module(student_id, func_path)
-    except Exception:
-        logging.exception("failed to load student API module: %s", func_path)
-        return text("Failed to load student API", 500)
-
+    module = _load_student_module(student_id, func_path)
     target = getattr(module, func_name, None)
     if not callable(target):
         return text("Student API function not found", 404)
 
-    try:
-        result = target(req, params)
-    except Exception:
-        logging.exception("student API function failed: id=%s func=%s", student_id, func_name)
-        return text("Student API function failed", 500)
-
+    result = target(req, params)
     return _student_api_response(result)
 
 
@@ -112,6 +102,37 @@ def _student_api_response(result: Any) -> Response:
     return text(str(result))
 
 
+App = Callable[[Request], Response]
+
+
+def exception_middleware(handler: App) -> App:
+    def wrapped(req: Request) -> Response:
+        try:
+            return handler(req)
+        except Exception as exc:
+            logging.exception("unhandled error while handling %s %s", req.method, req.path)
+            if req.path.startswith("/api/"):
+                return _api_exception_response(exc)
+            return text("Internal Server Error", 500)
+
+    return wrapped
+
+
+def _api_exception_response(exc: Exception) -> Response:
+    status = getattr(exc, "status", getattr(exc, "status_code", 500))
+    if not isinstance(status, int) or status < 400:
+        status = 500
+
+    message = str(exc) or "Internal Server Error"
+    payload = {
+        "error": {
+            "type": exc.__class__.__name__,
+            "message": message,
+        }
+    }
+    return json(_json.dumps(payload, ensure_ascii=False), status)
+
+
 """
 Git Lab TODO (충돌 유도 지점)
 -----------------------------
@@ -128,7 +149,7 @@ router.add("GET", "/api/v1/{id}/{func_name}", student_api)
 router.add("POST", "/api/v1/{id}/{func_name}", student_api)
 
 
-def app(req: Request) -> Response:
+def _app(req: Request) -> Response:
     base = os.path.join(os.path.dirname(__file__), "public")
     if req.path == "/" or req.path == "/index.html":
         return serve_file(req, base, "index.html")
@@ -136,6 +157,9 @@ def app(req: Request) -> Response:
         sub = req.path[len("/static/"):]
         return serve_file(req, base, sub)
     return router.dispatch(req)
+
+
+app = exception_middleware(_app)
 
 
 def parse_args() -> argparse.Namespace:
