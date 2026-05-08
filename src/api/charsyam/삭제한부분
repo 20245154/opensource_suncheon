@@ -1,0 +1,36 @@
+def minus(req: Request, params: Dict[str, str]) -> Response | Dict[str, int | str]:
+    operands = _read_operands(req)
+    if isinstance(operands, Response):
+        return operands
+
+    a, b = operands
+    return _result("minus", a, b, a - b)
+
+
+def multiply(req: Request, params: Dict[str, str]) -> Response | Dict[str, int | str]:
+    operands = _read_operands(req)
+    if isinstance(operands, Response):
+        return operands
+
+    a, b = operands
+    return _result("multiply", a, b, a * b)
+
+
+def divide(req: Request, params: Dict[str, str]) -> Response | Dict[str, float | int | str]:
+    operands = _read_operands(req)
+    if isinstance(operands, Response):
+        return operands
+
+    a, b = operands
+    if b == 0:
+        return bad_request("b must not be 0")
+    return _result("divide", a, b, a / b)
+
+
+def _read_operands(req: Request) -> Tuple[int, int] | Response:
+    try:
+        return int(req.query["a"]), int(req.query["b"])
+    except KeyError:
+        return bad_request("a and b query parameters are required")
+    except ValueError:
+        return bad_request("a and b must be integers")
